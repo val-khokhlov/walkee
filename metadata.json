@@ -1,0 +1,6 @@
+{
+  "name": "WanderAudio Cartographic Guide",
+  "description": "Location-aware pedestrian walking tour and AI-powered architectural, historical, and cultural audio guide along custom routes.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,207 @@
+---
+name: WanderAudio Cartographic Guide
+colors:
+  surface: '#f9f9ff'
+  surface-dim: '#cfdaf2'
+  surface-bright: '#f9f9ff'
+  surface-container-lowest: '#ffffff'
+  surface-container-low: '#f0f3ff'
+  surface-container: '#e7eeff'
+  surface-container-high: '#dee8ff'
+  surface-container-highest: '#d8e3fb'
+  on-surface: '#111c2d'
+  on-surface-variant: '#57423d'
+  inverse-surface: '#263143'
+  inverse-on-surface: '#ecf1ff'
+  outline: '#8a726c'
+  outline-variant: '#ddc0ba'
+  surface-tint: '#a13e28'
+  primary: '#9e3c26'
+  on-primary: '#ffffff'
+  primary-container: '#be543c'
+  on-primary-container: '#fffbff'
+  inverse-primary: '#ffb4a3'
+  secondary: '#006a61'
+  on-secondary: '#ffffff'
+  secondary-container: '#86f2e4'
+  on-secondary-container: '#006f66'
+  tertiary: '#8d4b00'
+  on-tertiary: '#ffffff'
+  tertiary-container: '#b15f00'
+  on-tertiary-container: '#fffbff'
+  error: '#ba1a1a'
+  on-error: '#ffffff'
+  error-container: '#ffdad6'
+  on-error-container: '#93000a'
+  primary-fixed: '#ffdad2'
+  primary-fixed-dim: '#ffb4a3'
+  on-primary-fixed: '#3d0600'
+  on-primary-fixed-variant: '#822714'
+  secondary-fixed: '#89f5e7'
+  secondary-fixed-dim: '#6bd8cb'
+  on-secondary-fixed: '#00201d'
+  on-secondary-fixed-variant: '#005049'
+  tertiary-fixed: '#ffdcc3'
+  tertiary-fixed-dim: '#ffb77d'
+  on-tertiary-fixed: '#2f1500'
+  on-tertiary-fixed-variant: '#6e3900'
+  background: '#f9f9ff'
+  on-background: '#111c2d'
+  surface-variant: '#d8e3fb'
+typography:
+  display-lg:
+    fontFamily: Plus Jakarta Sans
+    fontSize: 3.5rem
+    fontWeight: '800'
+    lineHeight: 4rem
+    letterSpacing: -0.03em
+  display-lg-mobile:
+    fontFamily: Plus Jakarta Sans
+    fontSize: 2.25rem
+    fontWeight: '800'
+    lineHeight: 2.75rem
+    letterSpacing: -0.02em
+  headline-lg:
+    fontFamily: Plus Jakarta Sans
+    fontSize: 2rem
+    fontWeight: '700'
+    lineHeight: 2.5rem
+    letterSpacing: -0.02em
+  headline-lg-mobile:
+    fontFamily: Plus Jakarta Sans
+    fontSize: 1.5rem
+    fontWeight: '700'
+    lineHeight: 2rem
+    letterSpacing: -0.01em
+  headline-md:
+    fontFamily: Plus Jakarta Sans
+    fontSize: 1.25rem
+    fontWeight: '600'
+    lineHeight: 1.75rem
+    letterSpacing: -0.01em
+  title-md:
+    fontFamily: Plus Jakarta Sans
+    fontSize: 1.125rem
+    fontWeight: '600'
+    lineHeight: 1.5rem
+  body-lg:
+    fontFamily: Plus Jakarta Sans
+    fontSize: 1rem
+    fontWeight: '400'
+    lineHeight: 1.6rem
+  body-md:
+    fontFamily: Plus Jakarta Sans
+    fontSize: 0.875rem
+    fontWeight: '400'
+    lineHeight: 1.4rem
+  label-md:
+    fontFamily: Plus Jakarta Sans
+    fontSize: 0.75rem
+    fontWeight: '600'
+    lineHeight: 1rem
+    letterSpacing: 0.04em
+  label-sm:
+    fontFamily: Plus Jakarta Sans
+    fontSize: 0.6875rem
+    fontWeight: '700'
+    lineHeight: 0.875rem
+    letterSpacing: 0.06em
+  mono-timer:
+    fontFamily: Space Mono
+    fontSize: 0.875rem
+    fontWeight: '500'
+    lineHeight: 1rem
+    letterSpacing: '0'
+rounded:
+  sm: 0.25rem
+  DEFAULT: 0.5rem
+  md: 0.75rem
+  lg: 1rem
+  xl: 1.5rem
+  full: 9999px
+spacing:
+  gutter: 1rem
+  gutter-tablet: 1.5rem
+  gutter-desktop: 2rem
+  margin: 1rem
+  margin-tablet: 2rem
+  margin-desktop: 3rem
+  space-xs: 0.25rem
+  space-sm: 0.5rem
+  space-md: 0.75rem
+  space-lg: 1rem
+  space-xl: 1.5rem
+  space-2xl: 2.5rem
+---
+
+## Brand & Style
+
+This design system serves an intelligent pedestrian walking tour and location-aware audio guide. The experience bridges physical navigation and immersive storytelling. The brand personality is grounded, observant, and quietly authoritative—like a well-crafted field journal fused with modern geospatial instrumentation. 
+
+The aesthetic blends **Modern Cartographic Functionalism** with **Tactile Wayfinding Elements**:
+- **Clarity over ornament:** UI chrome remains unobtrusive against active maps and ambient cityscapes while remaining readable under direct outdoor sunlight.
+- **Physicality and feedback:** Route handles, audio scrubbers, and bottom sheet sheets have tangible weight, precise friction, and high touch target precision.
+- **Wayfinding cues:** Vibrant emerald pulses signify active navigation vectors and forward momentum, anchored by deep slate topography and warm architectural terracotta milestones.
+
+## Colors
+
+The palette balances historical earthiness with modern vector cartography:
+- **Primary (`#E06D53` - Terracotta):** Used for focal points of interest (POIs), playback controls, primary action triggers, and story milestones. It evokes brick lanes, baked clay tiles, and urban heritage.
+- **Secondary (`#0D9488` - Deep Emerald / Teal):** Reserved strictly for active wayfinding states: walking trail vectors, live GPS pulses, progress halos, and audio active-sync indicators.
+- **Tertiary (`#D97706` - Warm Amber):** Denotes secondary highlights, architectural commentary, curated detours, and contextual tags.
+- **Neutral Canvas (`#1E293B` Slate & `#F8FAFC` Warm Chalk):** `#1E293B` provides high-contrast legibility for route text and dark-surface map overlays. The base ground uses `#F8FAFC` with surface containers nested in `#F1F5F9` and `#E2E8F0` to mimic heavy stone-stock paper.
+
+## Typography
+
+The typographic hierarchy prioritizes outdoor glanceability and rapid orientation:
+- **Plus Jakarta Sans** provides open counters and sturdy terminals that maintain clarity when an iPhone or Android screen jostles during walking.
+- Headings use negative letter-spacing for a composed, modern editorial posture.
+- Small indicators, category chips, and distance markers rely on uppercase `label-sm` with widened tracking (+0.06em) for instant identification.
+- Time codes, scrub timestamps, and remaining walking durations leverage `mono-timer` (Space Mono) to prevent layout shifts as seconds elapse.
+
+## Layout & Spacing
+
+The layout is built for single-handed mobile navigation over an interactive map view:
+- **Bottom-Anchored Architecture:** Primary controls, sheet drawers, playback scrubbing, and tour stops are weighted within the lower 60% of the viewport (the thumb zone).
+- **Responsive Fluid Overlay:** Mobile viewports use a 4-column layout with 16px outer margins, allowing bottom modal sheets to hug device edges. Tablets expand into a split screen (8 columns): persistent map on the right, audio guide narrative deck on the left. Desktop administration/planning layouts scale to a 12-column grid.
+- **Component Breathing Room:** Touch targets for track scrubber handles, GPS re-center FABs, and detour selection badges adhere to minimum 48x48px boundaries with `space-md` (12px) separation to avoid mis-taps during movement.
+
+## Elevation & Depth
+
+Visual hierarchy uses **Frosted Cartographic Stratification** with ambient, tinted drop-shadows:
+- **Ground Layer (Elevation 0):** Full-bleed vector map tiles and topography lines.
+- **Floating Controls (Elevation 1):** Map controls (compass, re-center, zoom) and floating search badges use a semi-opaque background (`rgba(248, 250, 252, 0.92)` in light mode, `rgba(30, 41, 59, 0.92)` in night mode) with an 8px backdrop blur and a fine border outline (`rgba(30, 41, 59, 0.08)`). Shadow: `0 2px 8px rgba(30, 41, 59, 0.06)`.
+- **Tour Narrative Cards & Bottom Sheets (Elevation 2):** Elevated interactive modals feature smooth directional elevation: `0 -4px 20px rgba(30, 41, 59, 0.08)`.
+- **Active Modals & Persistent Player Dock (Elevation 3):** Fixed audio controls float above bottom sheets with an amber/terracotta tinted shadow: `0 8px 30px rgba(224, 109, 83, 0.18)` to signify active acoustic state.
+
+## Shapes
+
+The shape system pairs structured cards with ergonomic organic pills:
+- **Base Surfaces & Cards:** Standard cards and bottom-sheet containers use Level 2 roundedness (`0.5rem` / `8px` up to `1rem` / `16px` for outer containers). Sheet top handles feature softened edges for clear drag affording.
+- **Pill Elements:** Filter tags, playback time chips, walking pace triggers, and turn-by-turn instruction badges use complete pill radiuses (`rounded-full` / `9999px`) to create distinction between spatial content containers and quick touch capsules.
+
+## Components
+
+### 1. Primary & Audio Buttons
+- **Play/Pause Floating Beacon:** 56x56px circular button with primary terracotta background (`#E06D53`), white glyph, and a soft pulsing emerald perimeter ring (`#0D9488`) when narrative is actively tracking movement.
+- **Secondary Actions:** White or slate background with a 1px border (`#E2E8F0`), Level 2 roundedness, active state shifting to warm stone (`#F1F5F9`).
+
+### 2. Audio Scrubber Controls
+- **Track Rail:** A 4px neutral rail (`#E2E8F0`) topped with a dual-color fill: traversed segment in Terracotta (`#E06D53`), buffered geographical sync segment in Emerald (`#0D9488`).
+- **Scrubber Thumb:** A 16x16px tactile circle with an outer 2px white rim and drop shadow. Expands to 20x20px on drag.
+- **Waveform Markers:** Integrated mini milestone notches on the scrubber timeline indicating geofenced POI markers ahead.
+
+### 3. Tactile Drag Reorder Handles
+- Tour sequence stops contain a 24x24px reorder handle consisting of 6 debossed dots (two vertical columns of three dots in `#94A3B8`). On touch-and-hold, the parent card scales up to 102% scale with enhanced ambient shadow.
+
+### 4. Crisp Pill Badges
+- **Status / Distance Badges:** Full-pill shape with `label-sm` text. Distance to next stop displays in `#0D9488` tint (`rgba(13, 148, 136, 0.12)` background, `#0D9488` solid text).
+- **Tour Category Tags:** Terracotta and Amber tinted pills indicating narrative genre (e.g., "Architecture", "True Crime", "Local Flora").
+
+### 5. Wayfinding Path & Map Overlays
+- **Trail Vector:** 6px solid Emerald stroke (`#0D9488`) with rounded caps and a faint outer glow (`rgba(13, 148, 136, 0.25)`).
+- **Completed Path:** Segment transitions to a refined slate dash (`#94A3B8`) once audio narration for that zone is logged.
+- **Compass & Turn Pill:** Top-center mounted pill container displaying upcoming walking cue ("Turn right onto St. Anne St. in 40m") in high-contrast `#1E293B` slate.
+
+### 6. Interactive Tour Cards
+- Surfaces feature clean 16px corner radiuses, nested padding (`space-lg`), and an edge-to-edge mini thumbnail preview with duration badge overlay in `mono-timer` typography.

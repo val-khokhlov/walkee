@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-surface: #f9f9ff;
+  --color-surface-dim: #cfdaf2;
+  --color-surface-lowest: #ffffff;
+  --color-surface-low: #f0f3ff;
+  --color-surface-container: #e7eeff;
+  --color-surface-high: #dee8ff;
+  --color-surface-highest: #d8e3fb;
+  --color-on-surface: #111c2d;
+  --color-on-surface-variant: #57423d;
+  --color-inverse-surface: #263143;
+  --color-inverse-on-surface: #ecf1ff;
+
+  --color-primary: #e06d53;
+  --color-primary-deep: #9e3c26;
+  --color-primary-fixed: #ffdad2;
+  --color-secondary: #0d9488;
+  --color-secondary-deep: #006a61;
+  --color-secondary-fixed: #89f5e7;
+  --color-tertiary: #d97706;
+  --color-tertiary-deep: #8d4b00;
+  --color-tertiary-fixed: #ffdcc3;
+  --color-outline: #8a726c;
+  --color-outline-variant: #ddc0ba;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    font-family: var(--font-sans);
+    background-color: var(--color-surface);
+    color: var(--color-on-surface);
+  }
+}
+
+.font-mono-timer {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom subtle range slider styling */
+input[type="range"].carto-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 9999px;
+  background: #e2e8f0;
+  outline: none;
+}
+
+input[type="range"].carto-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: #e06d53;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 6px rgba(17, 28, 45, 0.25);
+  cursor: pointer;
+  transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+input[type="range"].carto-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+input[type="range"].carto-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: #e06d53;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 6px rgba(17, 28, 45, 0.25);
+  cursor: pointer;
+}
+
+/* Thin clean scrollbars */
+.carto-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.carto-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.carto-scroll::-webkit-scrollbar-thumb {
+  background: rgba(138, 114, 108, 0.28);
+  border-radius: 9999px;
+}
+
+.carto-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(138, 114, 108, 0.48);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse,
+  .animate-ping,
+  .animate-spin {
+    animation: none !important;
+  }
+}
