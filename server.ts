@@ -1926,6 +1926,37 @@ async function startServer() {
       };
     });
 
+    /* Claude addition */
+    if (process.env.GEMINI_API_KEY) {
+      const settled = await Promise.allSettled(
+        categoryQueries.map((q) => researchGrounded(q.catId, building, buildingLabel, q.googleSearchUrl))
+      );
+      if (settled.some((s) => s.status === 'fulfilled')) {
+        const findings = settled.map((s, i) =>
+          s.status === 'fulfilled'
+            ? s.value
+            : {
+                categoryId: categoryQueries[i].catId,
+                queryUsed: categoryQueries[i].query,
+                isNotable: false,
+                headline: 'Research error',
+                summary: s.reason instanceof Error ? s.reason.message : String(s.reason),
+                wordCount: 0,
+                sources: [],
+                googleSearchUrl: categoryQueries[i].googleSearchUrl,
+              }
+        );
+        res.json({
+          findings,
+          positiveCount: findings.filter((f) => (f as { isNotable: boolean }).isNotable).length,
+          rawAiResponse: JSON.stringify(findings, null, 2),
+        });
+        return;
+      }
+      console.warn('Grounded research failed for all categories, falling back to Wikipedia/Places');
+    }
+    /* Claude addition end */
+    
     try {
       // Mode 1: Live Google Custom Search JSON API (when GOOGLE_CSE_API_KEY & GOOGLE_CSE_CX are configured)
       if (cseKey && cseCx) {
