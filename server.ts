@@ -170,7 +170,7 @@ nwr["building"]["wikipedia"]${around};
       /* try next mirror */
     }
   }
-  if (!elements) return [];
+  if (!elements) { console.warn('Overpass failed on all mirrors'); return []; }
 
   const found = new Map<string, { c: BuildingCandidate; score: number }>();
   for (const el of elements) {
