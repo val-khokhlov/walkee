@@ -57,6 +57,261 @@ function getGenAIClient(): GoogleGenAI {
   });
 }
 
+/* Claude fragment */
+const UA = 'WanderAudioCartographicGuide/1.0';
+const RESEARCH_MODEL = process.env.GEMINI_RESEARCH_MODEL || 'gemini-4-hydrogen'; // same model your recap route uses
+const MAX_CANDIDATES = Number(process.env.MAX_BUILDINGS_PER_ROUTE) || 250;
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function createLimiter(max: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  return async function run<T>(fn: () => Promise<T>): Promise<T> {
+    if (active >= max) await new Promise<void>((r) => queue.push(r));
+    else active++;
+    try {
+      return await fn();
+    } finally {
+      const next = queue.shift();
+      if (next) next(); // hand the slot over
+      else active--;
+    }
+  };
+}
+
+async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const retryable = /429|RESOURCE_EXHAUSTED|503|UNAVAILABLE|overloaded/i.test(msg);
+      if (!retryable || i >= tries - 1) throw e;
+      await sleepMs(1500 * 2 ** i + Math.random() * 500);
+    }
+  }
+}
+
+function simplifyPath(path: LatLng[], maxPts: number): LatLng[] {
+  if (path.length <= maxPts) return path;
+  const step = (path.length - 1) / (maxPts - 1);
+  return Array.from({ length: maxPts }, (_, i) => path[Math.round(i * step)]);
+}
+
+async function resolveAreaCity(pt: LatLng): Promise<string> {
+  try {
+    const u = new URL('https://nominatim.openstreetmap.org/reverse');
+    u.searchParams.set('format', 'json');
+    u.searchParams.set('zoom', '10');
+    u.searchParams.set('addressdetails', '1');
+    u.searchParams.set('lat', String(pt.lat));
+    u.searchParams.set('lon', String(pt.lng));
+    const r = await fetch(u.toString(), {
+      headers: { 'User-Agent': UA, 'Accept-Language': 'en' },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!r.ok) return '';
+    const d = (await r.json()) as {
+      address?: { city?: string; town?: string; village?: string; municipality?: string };
+    };
+    const a = d.address || {};
+    return a.city || a.town || a.village || a.municipality || '';
+  } catch {
+    return '';
+  }
+}
+
+/** Exhaustive address + landmark scan along the route polyline (no 20-result cap). */
+async function scanOverpass(
+  routePath: LatLng[],
+  cumulative: number[],
+  deviationMeters: number
+): Promise<BuildingCandidate[]> {
+  const radius = Math.round(deviationMeters + 30);
+  const coords = simplifyPath(routePath, 200)
+    .map((p) => `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`)
+    .join(',');
+  const around = `(around:${radius},${coords})`;
+  const query = `[out:json][timeout:60];(
+nwr["addr:housenumber"]["addr:street"]${around};
+nwr["historic"]["name"]${around};
+nwr["tourism"~"museum|attraction|gallery|artwork"]["name"]${around};
+nwr["building"]["wikidata"]${around};
+nwr["building"]["wikipedia"]${around};
+);out center tags qt;`;
+
+  const areaCity = await resolveAreaCity(routePath[Math.floor(routePath.length / 2)]);
+
+  type El = {
+    type?: string; id?: number; lat?: number; lon?: number;
+    center?: { lat?: number; lon?: number };
+    tags?: Record<string, string>;
+  };
+  let elements: El[] | null = null;
+  for (const endpoint of [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
+  ]) {
+    try {
+      const r = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+          'User-Agent': UA,
+        },
+        body: `data=${encodeURIComponent(query)}`,
+        signal: AbortSignal.timeout(65000),
+      });
+      if (!r.ok) continue;
+      elements = ((await r.json()) as { elements?: El[] }).elements || [];
+      break;
+    } catch {
+      /* try next mirror */
+    }
+  }
+  if (!elements) return [];
+
+  const found = new Map<string, { c: BuildingCandidate; score: number }>();
+  for (const el of elements) {
+    const lat = el.lat ?? el.center?.lat;
+    const lng = el.lon ?? el.center?.lon;
+    if (lat == null || lng == null) continue;
+    const t = el.tags || {};
+    const num = (t['addr:housenumber'] || '').trim();
+    const street = (t['addr:street:en'] || t['addr:street'] || '').trim();
+    const name = (t['name:en'] || t.name || '').trim();
+    const hasAddress = Boolean(num && street);
+    if (!hasAddress && !name) continue;
+    if (!hasAddress && !(t.historic || t.tourism || t.building)) continue;
+
+    const loc: LatLng = { lat, lng };
+    const stats = pointToPolylineStats(loc, routePath, cumulative);
+    if (stats.distanceMeters > deviationMeters) continue;
+
+    const city = (t['addr:city:en'] || t['addr:city'] || areaCity).trim();
+    const base = hasAddress ? `${num} ${street}` : name;
+    const streetAddress = `${base}${city ? `, ${city}` : ''}`;
+    const key = normalizeStreetKey(streetAddress);
+    if (!key) continue;
+
+    const score =
+      (t.wikidata || t.wikipedia ? 3 : 0) + (t.historic ? 3 : 0) + (t.tourism ? 2 : 0) + (name ? 1 : 0);
+    const prev = found.get(key);
+    if (prev) {
+      if (!prev.c.displayName && name) prev.c.displayName = name;
+      prev.score = Math.max(prev.score, score);
+      continue;
+    }
+    found.set(key, {
+      score,
+      c: {
+        id: `bldg-${key}`,
+        streetAddress,
+        normalizedAddress: key,
+        displayName: name || undefined,
+        neighborhood: city || undefined,
+        location: loc,
+        distanceFromRouteMeters: Math.round(stats.distanceMeters),
+        routeProgressMeters: Math.round(stats.routeProgressMeters),
+        placeId: el.type && el.id ? `osm:${el.type}/${el.id}` : undefined,
+        primaryType: t.historic || t.tourism || t.building || undefined,
+      },
+    });
+  }
+
+  // Cost guard: keep the likeliest-notable buildings if there are too many, then restore walking order
+  return [...found.values()]
+    .sort((a, b) => b.score - a.score || a.c.routeProgressMeters - b.c.routeProgressMeters)
+    .slice(0, MAX_CANDIDATES)
+    .map((x) => x.c)
+    .sort((a, b) => a.routeProgressMeters - b.routeProgressMeters);
+}
+/* Claude fragment end */
+/* Claude fragment2 start */
+const researchLimiter = createLimiter(Number(process.env.GEMINI_CONCURRENCY) || 8);
+const researchCache = new Map<string, { expiresAt: number; finding: Record<string, unknown> }>();
+
+function cleanForSpeech(s: string): string {
+  return s
+    .replace(/\*\*?|__|`/g, '')
+    .replace(/^#+\s*/gm, '')
+    .replace(/^\s*[-•*]\s+/gm, '')
+    .replace(/\[\d+(?:,\s*\d+)*\]/g, '')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function researchGrounded(
+  catId: CategoryId,
+  building: BuildingCandidate,
+  buildingLabel: string,
+  googleSearchUrl: string
+): Promise<Record<string, unknown>> {
+  const cacheKey = `${building.normalizedAddress}|${catId}`;
+  const hit = researchCache.get(cacheKey);
+  if (hit && hit.expiresAt > Date.now()) return hit.finding;
+
+  const { query, guidance } = buildCategoryPrompt(catId, buildingLabel);
+  const prompt = `You are the researcher for a walking-tour audio guide.
+Location: ${buildingLabel}${building.neighborhood ? `, ${building.neighborhood}` : ''} (lat ${building.location.lat.toFixed(5)}, lng ${building.location.lng.toFixed(5)}).
+
+Use Google Search to answer this question:
+"${query}"
+
+Rules:
+- ${guidance}
+- Use only facts found in search results about this exact address or building. Never invent names, dates or events. If the building is ordinary or you cannot verify the connection, answer NOTABLE: NO.
+- Write flowing narrative prose for text-to-speech: no markdown, bullets, headings, citations or URLs.
+
+Respond in exactly this format:
+NOTABLE: YES or NO
+HEADLINE: <one line, max 12 words>
+NARRATIVE:
+<the narrative, or one sentence explaining why it is not notable>`;
+
+  const ai = getGenAIClient();
+  const response = await withRetry(() =>
+    researchLimiter(() =>
+      ai.models.generateContent({
+        model: RESEARCH_MODEL,
+        contents: prompt,
+        config: { tools: [{ googleSearch: {} }], temperature: 0.3 },
+      })
+    )
+  );
+
+  const raw = (response.text || '').replace(/\r/g, '').trim();
+  const yes = /NOTABLE:\s*YES/i.test(raw);
+  const headline = (raw.match(/HEADLINE:\s*(.+)/i)?.[1] || '').trim();
+  const narrative = cleanForSpeech(raw.split(/NARRATIVE:\s*/i)[1] || '');
+  const wordCount = narrative.split(/\s+/).filter(Boolean).length;
+  const isNotable = yes && wordCount >= 80;
+
+  const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+  const seen = new Set<string>();
+  const sources = chunks
+    .map((c) => ({ title: c.web?.title || c.web?.uri || '', uri: c.web?.uri || '' }))
+    .filter((s) => s.uri && !seen.has(s.uri) && seen.add(s.uri))
+    .slice(0, 6);
+
+  const finding = {
+    categoryId: catId,
+    queryUsed: query,
+    isNotable,
+    headline: isNotable ? headline || building.displayName || building.streetAddress : 'No notable match found',
+    summary: narrative || 'No verifiable information was found for this building.',
+    wordCount: isNotable ? wordCount : 0,
+    sources: isNotable ? sources : [],
+    googleSearchUrl,
+    searchProvider: 'Gemini + Google Search grounding',
+  };
+  researchCache.set(cacheKey, { expiresAt: Date.now() + 24 * 3600 * 1000, finding }); // caches negatives too
+  return finding;
+}
+/* Claude fragment2 end */
+
 function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
 }
@@ -933,7 +1188,7 @@ async function startServer() {
       const firstPt = routePath[0];
       const lastPt = routePath[routePath.length - 1];
       const midPt = routePath[Math.floor(routePath.length / 2)];
-      const cacheKey = `${provider}|${firstPt.lat.toFixed(4)},${firstPt.lng.toFixed(4)}|${midPt.lat.toFixed(4)},${midPt.lng.toFixed(4)}|${lastPt.lat.toFixed(4)},${lastPt.lng.toFixed(4)}|${routePath.length}|${deviationMeters}`;
+      const cacheKey = `v2|${provider}|${firstPt.lat.toFixed(4)},${firstPt.lng.toFixed(4)}|${midPt.lat.toFixed(4)},${midPt.lng.toFixed(4)}|${lastPt.lat.toFixed(4)},${lastPt.lng.toFixed(4)}|${routePath.length}|${deviationMeters}`;
       const cachedEntry = discoveryResultCache.get(cacheKey);
       if (cachedEntry && cachedEntry.expiresAt > Date.now()) {
         res.json(cachedEntry.payload);
@@ -948,89 +1203,12 @@ async function startServer() {
       // Free OpenStreetMap / Carto / Apple-fallback street-address building scan (Overpass + Nominatim fallback)
       if (provider !== 'google') {
         const candidateMap = new Map<string, BuildingCandidate>();
-        const lats = routePath.map((p) => p.lat);
-        const lngs = routePath.map((p) => p.lng);
-        const meanLat = lats.reduce((a, b) => a + b, 0) / lats.length;
-        const padMeters = Math.min(Math.max(deviationMeters + 40, 80), 1200);
-        const padLat = padMeters / 111132.92;
-        const padLng = padMeters / (111319.9 * Math.max(0.2, Math.cos(toRad(meanLat))));
-        const bbox = `${(Math.min(...lats) - padLat).toFixed(5)},${(Math.min(...lngs) - padLng).toFixed(5)},${(Math.max(...lats) + padLat).toFixed(5)},${(Math.max(...lngs) + padLng).toFixed(5)}`;
-
-        let overpassOk = false;
-        const overpassQuery = `[out:json][timeout:22];(node["addr:housenumber"]["addr:street"](${bbox});way["addr:housenumber"]["addr:street"](${bbox}););out center tags;`;
-        for (const endpoint of [
-          'https://overpass-api.de/api/interpreter',
-          'https://overpass.private.coffee/api/interpreter',
-        ]) {
-          try {
-            const ovRes = await fetch(endpoint, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                Accept: 'application/json',
-                'User-Agent': 'WanderAudioCartographicGuide/1.0',
-              },
-              body: `data=${encodeURIComponent(overpassQuery)}`,
-              signal: AbortSignal.timeout(24000),
-            });
-            if (!ovRes.ok) continue;
-            const ovJson = (await ovRes.json()) as {
-              elements?: Array<{
-                type?: string;
-                id?: number;
-                lat?: number;
-                lon?: number;
-                center?: { lat?: number; lon?: number };
-                tags?: Record<string, string>;
-              }>;
-            };
-            overpassOk = true;
-            for (const el of ovJson.elements || []) {
-              const lat = el.lat ?? el.center?.lat;
-              const lng = el.lon ?? el.center?.lon;
-              if (lat == null || lng == null) continue;
-              const tags = el.tags || {};
-              const num = (tags['addr:housenumber'] || '').trim();
-              const street = (tags['addr:street:en'] || tags['addr:street'] || '').trim();
-              if (!num || !street) continue;
-
-              const coords: LatLng = { lat, lng };
-              const stats = pointToPolylineStats(coords, routePath, cumulative);
-              if (stats.distanceMeters > deviationMeters) continue;
-
-              const city = (tags['addr:city:en'] || tags['addr:city'] || '').trim();
-              const streetAddress = `${num} ${street}${city ? `, ${city}` : ''}`;
-              const displayName = (tags['name:en'] || tags.name || '').trim() || undefined;
-              const normKey = normalizeStreetKey(streetAddress);
-              if (!normKey) continue;
-
-              const existing = candidateMap.get(normKey);
-              if (!existing) {
-                candidateMap.set(normKey, {
-                  id: `bldg-${normKey}`,
-                  streetAddress,
-                  normalizedAddress: normKey,
-                  displayName,
-                  neighborhood: city || undefined,
-                  location: coords,
-                  distanceFromRouteMeters: Math.round(stats.distanceMeters),
-                  routeProgressMeters: Math.round(stats.routeProgressMeters),
-                  placeId: el.type && el.id ? `osm:${el.type}/${el.id}` : undefined,
-                  primaryType:
-                    tags.historic || tags.tourism || tags.amenity || tags.building || undefined,
-                });
-              } else if (!existing.displayName && displayName) {
-                existing.displayName = displayName;
-              }
-            }
-            break;
-          } catch {
-            // Try next Overpass mirror or Nominatim fallback
-          }
+        for (const c of await scanOverpass(routePath, cumulative, deviationMeters)) {
+          candidateMap.set(c.normalizedAddress, c);
         }
 
         // Fallback to Nominatim reverse sampling if Overpass timed out or failed
-        if (!overpassOk || candidateMap.size === 0) {
+        if (candidateMap.size === 0) {
           const nomNodes = samplePathEquidistant(routePath, 10, 170);
           for (let i = 0; i < nomNodes.length; i++) {
             if (i > 0) await new Promise((r) => setTimeout(r, 260));
@@ -1406,6 +1584,12 @@ async function startServer() {
         );
       }
 
+      for (const c of await scanOverpass(routePath, cumulative, deviationMeters)) {
+        const existing = candidateMap.get(c.normalizedAddress);
+        if (!existing) candidateMap.set(c.normalizedAddress, c);
+        else if (!existing.displayName && c.displayName) existing.displayName = c.displayName;
+      }
+      
       if (quotaTriggered && candidateMap.size === 0) {
         res.status(429).json({
           error: 'Google Maps Platform quota reached while scanning buildings.',
