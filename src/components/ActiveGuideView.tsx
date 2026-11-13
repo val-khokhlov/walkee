@@ -946,6 +946,20 @@ export const ActiveGuideView: React.FC<ActiveGuideViewProps> = ({
                     ))}
                 </div>
 
+                {/* Claude addition */}
+                {activeFinding.googleSearchUrl && (
+                  <a
+                    href={activeFinding.googleSearchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-[#0D9488] hover:underline"
+                  >
+                    Compare with Google AI Overview
+                    <ExternalLink className="w-3 h-3 shrink-0" />
+                  </a>
+                )}
+                {/* Claude addition end */}
+                
                 {activeFinding.sources.length > 0 && (
                   <div className="pt-3 border-t border-[#f0f3ff]">
                     <p className="text-[11px] font-bold uppercase tracking-wider text-[#8a726c] mb-1.5">
