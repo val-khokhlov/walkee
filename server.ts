@@ -170,7 +170,7 @@ nwr["building"]["wikipedia"]${around};
       /* try next mirror */
     }
   }
-  if (!elements) { console.warn('Overpass failed on all mirrors'); return []; }
+  if (!elements) { console.('Overpass failed on all mirrors'); return []; }
 
   const found = new Map<string, { c: BuildingCandidate; score: number }>();
   for (const el of elements) {
@@ -311,6 +311,87 @@ NARRATIVE:
   return finding;
 }
 /* Claude fragment2 end */
+/* Claude fragment3 */
+async function researchBuildingGrounded(
+  cats: Array<{ catId: CategoryId; query: string; googleSearchUrl: string }>,
+  building: BuildingCandidate,
+  buildingLabel: string
+): Promise<Record<string, unknown>[]> {
+  const todo = cats.filter((c) => {
+    const hit = researchCache.get(`${building.normalizedAddress}|${c.catId}`);
+    return !(hit && hit.expiresAt > Date.now());
+  });
+  const cached = cats
+    .map((c) => researchCache.get(`${building.normalizedAddress}|${c.catId}`))
+    .filter((h): h is NonNullable<typeof h> => Boolean(h && h.expiresAt > Date.now()))
+    .map((h) => h.finding);
+  if (todo.length === 0) return cached;
+
+  const sections = todo
+    .map((c) => `=== CATEGORY: ${c.catId} ===\nQuestion: "${c.query}"\nGuidance: ${buildCategoryPrompt(c.catId, buildingLabel).guidance}`)
+    .join('\n\n');
+
+  const prompt = `You are the researcher for a walking-tour audio guide.
+Location: ${buildingLabel}${building.neighborhood ? `, ${building.neighborhood}` : ''} (lat ${building.location.lat.toFixed(5)}, lng ${building.location.lng.toFixed(5)}).
+
+Use Google Search. Answer each category below separately.
+Rules:
+- Use only facts found in search results about this exact address or building. Never invent names, dates or events. If the building is ordinary or the connection can't be verified, answer NOTABLE: NO for that category.
+- Narratives must be flowing prose for text-to-speech: no markdown, bullets, headings, citations or URLs.
+
+${sections}
+
+Respond for EVERY category in exactly this format:
+=== CATEGORY: <id> ===
+NOTABLE: YES or NO
+HEADLINE: <one line, max 12 words>
+NARRATIVE:
+<narrative, or one sentence explaining why not notable>`;
+
+  const ai = getGenAIClient();
+  const response = await withRetry(
+    () => researchLimiter(() => ai.models.generateContent({
+      model: RESEARCH_MODEL,
+      contents: prompt,
+      config: { tools: [{ googleSearch: {} }], temperature: 0.3, maxOutputTokens: 8192 },
+    })),
+    5
+  );
+
+  const raw = (response.text || '').replace(/\r/g, '');
+  const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+  const seen = new Set<string>();
+  const sources = chunks
+    .map((c) => ({ title: c.web?.title || c.web?.uri || '', uri: c.web?.uri || '' }))
+    .filter((s) => s.uri && !seen.has(s.uri) && seen.add(s.uri))
+    .slice(0, 6);
+
+  const out: Record<string, unknown>[] = [...cached];
+  for (const c of todo) {
+    const m = raw.match(new RegExp(`=== CATEGORY:\\s*${c.catId}\\s*===([\\s\\S]*?)(?==== CATEGORY:|$)`, 'i'));
+    const block = m?.[1] || '';
+    const yes = /NOTABLE:\s*YES/i.test(block);
+    const headline = (block.match(/HEADLINE:\s*(.+)/i)?.[1] || '').trim();
+    const narrative = cleanForSpeech(block.split(/NARRATIVE:\s*/i)[1] || '');
+    const wordCount = narrative.split(/\s+/).filter(Boolean).length;
+    const isNotable = yes && wordCount >= 80;
+    const finding = {
+      categoryId: c.catId,
+      queryUsed: c.query,
+      isNotable,
+      headline: isNotable ? headline || building.displayName || building.streetAddress : 'No notable match found',
+      summary: narrative || 'No verifiable information was found for this building.',
+      wordCount: isNotable ? wordCount : 0,
+      sources: isNotable ? sources : [],
+      googleSearchUrl: c.googleSearchUrl,
+      searchProvider: 'Gemini + Google Search grounding',
+    };
+    if (block) researchCache.set(`${building.normalizedAddress}|${c.catId}`, { expiresAt: Date.now() + 24 * 3600 * 1000, finding });
+    out.push(finding);
+  }
+  return out;
+}
+/* Claude fragment3 end */
 
 function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
@@ -1454,7 +1535,7 @@ async function startServer() {
                   }
                 }
               } catch (err) {
-                console.warn('Nearby search node error:', err);
+                console.('Nearby search node error:', err);
               }
             })
           );
@@ -1578,7 +1659,7 @@ async function startServer() {
                 }
               }
             } catch (err) {
-              console.warn('Reverse geocode node error:', err);
+              console.('Reverse geocode node error:', err);
             }
           })
         );
@@ -1953,9 +2034,33 @@ async function startServer() {
         });
         return;
       }
-      console.warn('Grounded research failed for all categories, falling back to Wikipedia/Places');
+      const reasons = settled
+        .filter((s): s is PromiseRejectedResult => s.status === 'rejected')
+        .map((s) => (s.reason instanceof Error ? s.reason.message : String(s.reason)).slice(0, 300));
+      console.warn('Grounded research failed for all categories:', reasons[0]);
+      //console.warn('Grounded research failed for all categories, falling back to Wikipedia/Places');
     }
     /* Claude addition end */
+    /* Claude alternative addition - optimized * /
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const findings = await researchBuildingGrounded(
+          categoryQueries.map((q) => ({ catId: q.catId, query: q.query, googleSearchUrl: q.googleSearchUrl })),
+          building,
+          buildingLabel
+        );
+        res.json({
+          findings,
+          positiveCount: findings.filter((f) => (f as { isNotable: boolean }).isNotable).length,
+          rawAiResponse: JSON.stringify(findings, null, 2),
+        });
+        return;
+      } catch (e) {
+        console.warn('Grounded research failed:', e instanceof Error ? e.message : e);
+        // falls through to Wikipedia/Places
+      }
+    }
+    /* Claude alternative addition end */
     
     try {
       // Mode 1: Live Google Custom Search JSON API (when GOOGLE_CSE_API_KEY & GOOGLE_CSE_CX are configured)
@@ -2340,6 +2445,20 @@ async function startServer() {
     });
   }
 
+  app.get('/api/debug/research-test', async (_req, res) => {
+      try {
+        const ai = getGenAIClient();
+        const r = await ai.models.generateContent({
+          model: RESEARCH_MODEL,
+          contents: 'Using Google Search, in two sentences: what is the Transamerica Pyramid in San Francisco?',
+          config: { tools: [{ googleSearch: {} }] },
+        });
+        res.json({ ok: true, model: RESEARCH_MODEL, text: r.text, grounded: Boolean(r.candidates?.[0]?.groundingMetadata) });
+      } catch (e) {
+        res.status(500).json({ ok: false, model: RESEARCH_MODEL, error: e instanceof Error ? e.message : String(e) });
+      }
+  });
+  
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`WanderAudio server listening on http://0.0.0.0:${PORT}`);
   });
