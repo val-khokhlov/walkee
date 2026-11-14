@@ -59,7 +59,7 @@ function getGenAIClient(): GoogleGenAI {
 
 /* Claude fragment */
 const UA = 'WanderAudioCartographicGuide/1.0';
-const RESEARCH_MODEL = process.env.GEMINI_RESEARCH_MODEL || 'gemini-4-hydrogen'; // same model your recap route uses
+const RESEARCH_MODEL = process.env.GEMINI_RESEARCH_MODEL || 'gemini-3.5-flash-lite'; // same model your recap route uses
 const MAX_CANDIDATES = Number(process.env.MAX_BUILDINGS_PER_ROUTE) || 250;
 const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -170,7 +170,7 @@ nwr["building"]["wikipedia"]${around};
       /* try next mirror */
     }
   }
-  if (!elements) { console.('Overpass failed on all mirrors'); return []; }
+  if (!elements) { console.warn('Overpass failed on all mirrors'); return []; }
 
   const found = new Map<string, { c: BuildingCandidate; score: number }>();
   for (const el of elements) {
@@ -1535,7 +1535,7 @@ async function startServer() {
                   }
                 }
               } catch (err) {
-                console.('Nearby search node error:', err);
+                console.warn('Nearby search node error:', err);
               }
             })
           );
@@ -1659,7 +1659,7 @@ async function startServer() {
                 }
               }
             } catch (err) {
-              console.('Reverse geocode node error:', err);
+              console.warn('Reverse geocode node error:', err);
             }
           })
         );

@@ -551,7 +551,7 @@ export default function App() {
         });
       };
 
-      const CONCURRENCY = 6;
+      const CONCURRENCY = 3;
       for (let i = 0; i < candidates.length; i += CONCURRENCY) {
         if (controller.signal.aborted) break;
         const batch = candidates.slice(i, i + CONCURRENCY);
