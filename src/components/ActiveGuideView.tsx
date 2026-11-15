@@ -276,6 +276,7 @@ export const ActiveGuideView: React.FC<ActiveGuideViewProps> = ({
           body: JSON.stringify({
             text: segment.text,
             voiceName: settings.voiceName,
+            guideLanguage: settings.guideLanguage,
           }),
         });
         if (!res.ok) return null;
@@ -470,6 +471,7 @@ export const ActiveGuideView: React.FC<ActiveGuideViewProps> = ({
               streetAddress: building.streetAddress,
               displayName: building.displayName,
               findings: positive,
+              guideLanguage: settings.guideLanguage,
             }),
           });
           if (res.ok) {

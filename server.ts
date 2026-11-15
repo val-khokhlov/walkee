@@ -27,6 +27,7 @@ interface BuildingCandidate {
   placeId?: string;
   googleMapsUri?: string;
   primaryType?: string;
+  osmFacts?: string;
 }
 
 type CategoryId =
@@ -49,6 +50,7 @@ function getAppleMapsToken(): string {
 function getGenAIClient(): GoogleGenAI {
   return new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY,
+    apiVersion: 'v1beta',
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
@@ -326,7 +328,8 @@ async function wikiNearby(
 async function researchFromSources(
   cats: Array<{ catId: CategoryId; query: string; googleSearchUrl: string }>,
   building: BuildingCandidate,
-  buildingLabel: string
+  buildingLabel: string,
+  guideLanguage?: string
 ): Promise<Record<string, unknown>[]> {
   const mkFinding = (
     c: { catId: CategoryId; query: string; googleSearchUrl: string },
@@ -365,7 +368,7 @@ ${sourceText}
 Rules:
 - Sources may describe neighboring places. Use a source only if it is clearly about this exact building (matching address or name). Otherwise answer NOTABLE: NO for that category.
 - Never add names, dates or events that are not in the sources. If the sources do not support a category, answer NOTABLE: NO.
-- Write flowing narrative prose for text-to-speech: no markdown, bullets, headings, citations or URLs. Sources may be in Ukrainian; write the narrative in English.
+- Write flowing narrative prose for text-to-speech: no markdown, bullets, headings, citations or URLs. Write the narrative entirely in ${guideLanguage || 'English'}.
 
 ${sections}
 
@@ -2194,9 +2197,10 @@ async function startServer() {
 
   // Submit each category query as a search query (Google Custom Search when configured, or Wikipedia + Google Places Search)
   app.post('/api/buildings/research', async (req, res) => {
-    const { building, categories } = req.body as {
+    const { building, categories, guideLanguage } = req.body as {
       building?: BuildingCandidate;
       categories?: CategoryId[];
+      guideLanguage?: string;
     };
 
     if (!building?.streetAddress || !Array.isArray(categories) || categories.length === 0) {
@@ -2227,7 +2231,8 @@ async function startServer() {
         const findings = await researchFromSources(
           categoryQueries.map((q) => ({ catId: q.catId, query: q.query, googleSearchUrl: q.googleSearchUrl })),
           building,
-          buildingLabel
+          buildingLabel,
+          guideLanguage
         );
         res.json({
           findings,
@@ -2548,10 +2553,11 @@ async function startServer() {
   // Brief 2-sentence recap for revisited buildings
   app.post('/api/buildings/recap', async (req, res) => {
     try {
-      const { streetAddress, displayName, findings } = req.body as {
+      const { streetAddress, displayName, findings, guideLanguage } = req.body as {
         streetAddress: string;
         displayName?: string;
         findings: Array<{ categoryId: string; headline: string; summary: string }>;
+        guideLanguage?: string;
       };
 
       const ai = getGenAIClient();
@@ -2559,11 +2565,13 @@ async function startServer() {
         .map((f) => `${f.categoryId} (${f.headline}): ${f.summary.slice(0, 260)}`)
         .join('\n');
 
+      const langInstruction = guideLanguage ? ` Write the recap entirely in ${guideLanguage}.` : '';
+
       const response = await aiGenerate({
         model: 'gemini-4-hydrogen',
         contents: `Create a warm, natural 2-sentence audio recap for a walker passing ${
           displayName ? `${displayName} at ` : ''
-        }${streetAddress} a second time. Remind them what made this stop notable based on:\n${digest}`,
+        }${streetAddress} a second time. Remind them what made this stop notable based on:\n${digest}.${langInstruction}`,
         config: {
           thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         },
@@ -2584,16 +2592,22 @@ async function startServer() {
   // Gemini Text-to-Speech (gemini-3.8-flash-lite-tts -> audio/wav)
   app.post('/api/tts', async (req, res) => {
     try {
-      const { text, voiceName = 'Kore', style } = req.body as {
+      const { text, voiceName = 'Kore', style, guideLanguage } = req.body as {
         text: string;
         voiceName?: string;
         style?: string;
+        guideLanguage?: string;
       };
 
       if (!text || !text.trim()) {
         res.status(400).json({ error: 'Text is required for TTS.' });
         return;
       }
+
+      console.error(`language: ${guideLanguage} code=`);
+      const defaultStyle = guideLanguage
+        ? `Warm, articulate audio walking tour guide in ${guideLanguage}`
+        : 'Warm, articulate, documentary audio walking tour guide with clear pacing';
 
       const ai = getGenAIClient();
       const response = await aiGenerate({
@@ -2605,15 +2619,14 @@ async function startServer() {
               {
                 text: text.slice(0, 3500),
                 speechMetadata: {
-                  style:
-                    style ||
-                    'Warm, articulate, documentary audio walking tour guide with clear pacing',
+                  style: style || defaultStyle,
                 },
               },
             ],
           },
         ],
         config: {
+          httpOptions: { apiVersion: 'v1beta' },
           responseModalities: ['AUDIO'],
           speechConfig: {
             voiceConfig: {

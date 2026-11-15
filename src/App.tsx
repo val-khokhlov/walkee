@@ -41,6 +41,7 @@ const DEFAULT_SETTINGS: GuideSettings = {
   voiceName: 'Kore',
   playbackRate: 1.0,
   autoTriggerProximity: true,
+  guideLanguage: '',
 };
 
 function createWaypoint(label: string, coords?: LatLngLiteral): WaypointItem {
@@ -109,8 +110,52 @@ export default function App() {
     createWaypoint(PRESET_ROUTES[0].origin),
     createWaypoint(PRESET_ROUTES[0].destination),
   ]);
-
   const [settings, setSettings] = useState<GuideSettings>(loadSavedSettings);
+  const [focusedWaypointId, setFocusedWaypointId] = useState<string | null>(null);
+
+  // Auto-update route whenever waypoints change and have at least 2 entries
+  useEffect(() => {
+    const filledWaypoints = waypoints.filter((w) => w.label.trim().length > 0);
+    if (filledWaypoints.length < 2) {
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const routeRes = await fetch('/api/maps/compute-route', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            provider: settings.mapProvider,
+            waypoints: filledWaypoints.map((w) => ({
+              label: w.label.trim(),
+              coords: w.coords,
+            })),
+          }),
+        });
+        if (!routeRes.ok) return;
+        const routeData = (await routeRes.json()) as ComputedRoute;
+        if (routeData && routeData.path && routeData.path.length >= 2) {
+          const originLabel = filledWaypoints[0].label.trim();
+          const destinationLabel = filledWaypoints[filledWaypoints.length - 1].label.trim();
+          setActiveRoute({
+            ...routeData,
+            originLabel,
+            destinationLabel,
+          });
+        }
+      } catch {
+        // Ignore background route preview errors
+      }
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [waypoints, settings.mapProvider]);
+
   const [progress, setProgress] = useState<DiscoveryProgressState | null>(null);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
@@ -446,6 +491,7 @@ export default function App() {
               body: JSON.stringify({
                 building: candidate,
                 categories: missingCategories,
+                guideLanguage: settings.guideLanguage,
               }),
             });
 
@@ -671,7 +717,7 @@ export default function App() {
                 : 'border-transparent text-[#57423d] hover:text-[#111c2d]'
             }`}
           >
-            Route Setup
+            Plan
           </button>
           <button
             type="button"
@@ -683,7 +729,7 @@ export default function App() {
                 : 'border-transparent text-[#57423d] hover:text-[#111c2d]'
             }`}
           >
-            Audio Guide
+            Go!
           </button>
           <button
             type="button"
@@ -706,13 +752,6 @@ export default function App() {
             }`}
           >
             Debug
-          </button>
-          <button
-            type="button"
-            onClick={() => setCacheModalOpen(true)}
-            className="py-1 border-b-2 border-transparent text-[#57423d] hover:text-[#111c2d] transition-colors whitespace-nowrap shrink-0"
-          >
-            Offline Cache
           </button>
         </nav>
 
@@ -767,6 +806,9 @@ export default function App() {
                 errorBanner={errorBanner}
                 placesEnabled={mapsReady}
                 mapProvider={settings.mapProvider}
+                focusedWaypointId={focusedWaypointId}
+                onFocusWaypoint={setFocusedWaypointId}
+                onBlurWaypoint={() => setFocusedWaypointId(null)}
               />
             ) : (
               <ActiveGuideView
@@ -804,6 +846,24 @@ export default function App() {
               onMapClickLocation={(coords) => {
                 if (screen === 'guide') {
                   setUserLocation(coords);
+                } else if (screen === 'planner') {
+                  const label = `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`;
+                  if (focusedWaypointId) {
+                    handleUpdateWaypoint(focusedWaypointId, label, coords);
+                  } else {
+                    const newWp = {
+                      id: `wp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                      label,
+                      coords,
+                    };
+                    if (waypoints.length >= 2) {
+                      const nextWps = [...waypoints];
+                      nextWps.splice(nextWps.length - 1, 0, newWp);
+                      setWaypoints(nextWps);
+                    } else {
+                      setWaypoints([...waypoints, newWp]);
+                    }
+                  }
                 }
               }}
               isOffline={isOffline}

@@ -34,6 +34,9 @@ interface RoutePlannerViewProps {
   errorBanner: string | null;
   placesEnabled?: boolean;
   mapProvider?: MapProviderId;
+  focusedWaypointId?: string | null;
+  onFocusWaypoint?: (id: string) => void;
+  onBlurWaypoint?: () => void;
 }
 
 export const RoutePlannerView: React.FC<RoutePlannerViewProps> = ({
@@ -51,6 +54,9 @@ export const RoutePlannerView: React.FC<RoutePlannerViewProps> = ({
   errorBanner,
   placesEnabled = false,
   mapProvider = 'google',
+  focusedWaypointId,
+  onFocusWaypoint,
+  onBlurWaypoint,
 }) => {
   const activeProviderName =
     MAP_PROVIDER_OPTIONS.find((p) => p.id === mapProvider)?.name || 'Google Maps';
@@ -96,7 +102,7 @@ export const RoutePlannerView: React.FC<RoutePlannerViewProps> = ({
         <div>
           <div className="flex items-center justify-between gap-2">
             <h1 className="text-2xl font-extrabold tracking-tight text-[#111c2d] text-balance">
-              Route Setup
+              Plan
             </h1>
             <div className="flex items-center gap-2">
               <span className="text-[11px] font-semibold text-[#0D9488] bg-[#0D9488]/10 px-2.5 py-1 rounded-lg">
@@ -226,6 +232,8 @@ export const RoutePlannerView: React.FC<RoutePlannerViewProps> = ({
                         markerLabel={String(idx + 1)}
                         placesEnabled={placesEnabled}
                         mapProvider={mapProvider}
+                        onFocus={() => onFocusWaypoint?.(wp.id)}
+                        onBlur={() => onBlurWaypoint?.()}
                       />
                     </div>
 

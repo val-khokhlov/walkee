@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import {
   DISCOVERY_CATEGORIES,
+  GUIDE_LANGUAGE_OPTIONS,
   MAP_PROVIDER_OPTIONS,
   REVISITED_OPTIONS,
   VOICE_OPTIONS,
@@ -351,6 +352,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   );
                 })}
               </div>
+            </div>
+
+            <hr className="border-[#f0f3ff]" />
+
+            {/* Guide Language */}
+            <div>
+              <label
+                htmlFor="settings-language-select"
+                className="block text-xs font-semibold text-[#57423d] mb-1.5"
+              >
+                Guide Language (Output Text & Voice)
+              </label>
+              <select
+                id="settings-language-select"
+                value={settings.guideLanguage || ''}
+                onChange={(e) =>
+                  onUpdateSettings({ guideLanguage: e.target.value })
+                }
+                className="w-full min-h-[44px] px-3 py-2 text-xs font-medium bg-white border border-[#ddc0ba]/70 rounded-xl text-[#111c2d] focus:outline-none focus:border-[#0D9488]"
+              >
+                {GUIDE_LANGUAGE_OPTIONS.map((lang) => (
+                  <option key={lang.id} value={lang.id}>
+                    {lang.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <hr className="border-[#f0f3ff]" />

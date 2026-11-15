@@ -105,6 +105,7 @@ export interface GuideSettings {
   voiceName: VoiceName;
   playbackRate: number;
   autoTriggerProximity: boolean;
+  guideLanguage?: string;
 }
 
 export interface CachedRouteBundle {

@@ -181,3 +181,14 @@ export const MAP_PROVIDER_OPTIONS: MapProviderOption[] = [
   },
 ];
 
+export const GUIDE_LANGUAGE_OPTIONS: { id: string; label: string }[] = [
+  { id: '', label: 'System default' },
+  { id: 'English', label: 'English' },
+  { id: 'Français', label: 'Français' },
+  { id: 'Deutsch', label: 'Deutsch' },
+  { id: 'Español', label: 'Español' },
+  { id: 'Italiano', label: 'Italiano' },
+  { id: 'Русский', label: 'Русский' },
+  { id: 'Українська', label: 'Українська' },
+];
+

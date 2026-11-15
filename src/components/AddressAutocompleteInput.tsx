@@ -18,6 +18,8 @@ interface AddressAutocompleteInputProps {
   markerLabel?: string;
   placesEnabled?: boolean;
   mapProvider?: MapProviderId;
+  onFocus?: () => void;
+  onBlur?: () => void;
 }
 
 interface UnifiedSuggestion {
@@ -109,6 +111,8 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
   markerLabel,
   placesEnabled = false,
   mapProvider = 'google',
+  onFocus,
+  onBlur,
 }) => {
   const [placesLib, setPlacesLib] = useState<google.maps.PlacesLibrary | null>(null);
   const [suggestions, setSuggestions] = useState<UnifiedSuggestion[]>([]);
@@ -273,8 +277,14 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
           type="text"
           value={value}
           disabled={disabled}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
+          onFocus={() => {
+            setIsFocused(true);
+            onFocus?.();
+          }}
+          onBlur={() => {
+            setIsFocused(false);
+            onBlur?.();
+          }}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           autoComplete="off"
