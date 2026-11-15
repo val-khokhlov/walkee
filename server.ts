@@ -59,7 +59,7 @@ function getGenAIClient(): GoogleGenAI {
 
 /* Claude fragment */
 const UA = 'WanderAudioCartographicGuide/1.0';
-const RESEARCH_MODEL = process.env.GEMINI_RESEARCH_MODEL || 'gemini-4-hydrogen'; // same model your recap route uses
+const RESEARCH_MODEL = process.env.GEMINI_RESEARCH_MODEL || 'gemini-3.5-flash-lite'; // same model your recap route uses
 const MAX_CANDIDATES = Number(process.env.MAX_BUILDINGS_PER_ROUTE) || 250;
 const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -77,6 +77,40 @@ function createLimiter(max: number) {
       else active--;
     }
   };
+}
+
+const MAX_AI_RPM = Math.max(1, Number(process.env.MAX_AI_RPM) || 5);
+const aiCallTimestamps: number[] = [];
+let aiGate: Promise<void> = Promise.resolve();
+
+/** Resolves when a call slot is free; callers are served strictly in arrival order. */
+function acquireAiSlot(): Promise<void> {
+  const ticket = aiGate.then(async () => {
+    for (;;) {
+      const now = Date.now();
+      while (aiCallTimestamps.length && now - aiCallTimestamps[0] >= 60_000) {
+        aiCallTimestamps.shift();
+      }
+      if (aiCallTimestamps.length < MAX_AI_RPM) {
+        aiCallTimestamps.push(now);
+        return;
+      }
+      console.error(`[debug] acquireAiSlot(): delaying query, max=${MAX_AI_RPM} currently running=${aiCallTimestamps.length}`);
+      await sleepMs(aiCallTimestamps[0] + 60_000 - now + 25);
+    }
+  });
+  aiGate = ticket;
+  return ticket;
+}
+
+/** Use this instead of ai.models.generateContent everywhere. */
+async function aiGenerate(
+  params: Parameters<GoogleGenAI['models']['generateContent']>[0]
+) {
+  await acquireAiSlot();
+  //params.model = 'gemini-3.5-flash-lite';
+  console.log('[debug] aiGenerate(): Gemini call ', params.model, ' at ', new Date().toISOString());
+  return getGenAIClient().models.generateContent(params);
 }
 
 async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
@@ -170,7 +204,7 @@ nwr["building"]["wikipedia"]${around};
       /* try next mirror */
     }
   }
-  if (!elements) return [];
+  if (!elements) { console.error('scanOverpass(): no elements found'); return []; }
 
   const found = new Map<string, { c: BuildingCandidate; score: number }>();
   for (const el of elements) {
@@ -181,7 +215,11 @@ nwr["building"]["wikipedia"]${around};
     const num = (t['addr:housenumber'] || '').trim();
     const street = (t['addr:street:en'] || t['addr:street'] || '').trim();
     const name = (t['name:en'] || t.name || '').trim();
+    const FACT_KEYS = ['name', 'name:en', 'architect', 'start_date', 'building:architecture', 'heritage', 'description', 'description:en', 'wikipedia', 'wikidata', 'building:levels'];
+    const osmFacts = FACT_KEYS.filter((k) => t[k]).map((k) => `${k}: ${t[k]}`).join('\n');
     const hasAddress = Boolean(num && street);
+    console.error(`[debug] scanOverpass(): checking address num="${num}" street="${street}" name="${name}" hasAddress=${hasAddress}`);
+    //if (!hasAddress) continue; // skip everything that has no street address
     if (!hasAddress && !name) continue;
     if (!hasAddress && !(t.historic || t.tourism || t.building)) continue;
 
@@ -216,6 +254,7 @@ nwr["building"]["wikipedia"]${around};
         routeProgressMeters: Math.round(stats.routeProgressMeters),
         placeId: el.type && el.id ? `osm:${el.type}/${el.id}` : undefined,
         primaryType: t.historic || t.tourism || t.building || undefined,
+        osmFacts: osmFacts || undefined,
       },
     });
   }
@@ -241,6 +280,127 @@ function cleanForSpeech(s: string): string {
     .replace(/https?:\/\/\S+/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+async function wikiNearby(
+  lang: 'en' | 'uk',
+  loc: LatLng
+): Promise<Array<{ title: string; url: string; extract: string }>> {
+  try {
+    const g = new URL(`https://${lang}.wikipedia.org/w/api.php`);
+    g.searchParams.set('action', 'query');
+    g.searchParams.set('list', 'geosearch');
+    g.searchParams.set('gscoord', `${loc.lat}|${loc.lng}`);
+    g.searchParams.set('gsradius', '60');
+    g.searchParams.set('gslimit', '3');
+    g.searchParams.set('format', 'json');
+    const r = await fetch(g, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return [];
+    const j = (await r.json()) as { query?: { geosearch?: Array<{ pageid: number; title: string }> } };
+    const out: Array<{ title: string; url: string; extract: string }> = [];
+    for (const h of j.query?.geosearch || []) {
+      const e = new URL(`https://${lang}.wikipedia.org/w/api.php`);
+      e.searchParams.set('action', 'query');
+      e.searchParams.set('prop', 'extracts');
+      e.searchParams.set('explaintext', '1');
+      e.searchParams.set('pageids', String(h.pageid));
+      e.searchParams.set('format', 'json');
+      const er = await fetch(e, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
+      if (!er.ok) continue;
+      const ej = (await er.json()) as { query?: { pages?: Record<string, { extract?: string }> } };
+      const extract = Object.values(ej.query?.pages || {})[0]?.extract || '';
+      if (extract.length > 200) {
+        out.push({
+          title: h.title,
+          url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(h.title.replace(/ /g, '_'))}`,
+          extract: extract.slice(0, 9000),
+        });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+async function researchFromSources(
+  cats: Array<{ catId: CategoryId; query: string; googleSearchUrl: string }>,
+  building: BuildingCandidate,
+  buildingLabel: string
+): Promise<Record<string, unknown>[]> {
+  const mkFinding = (
+    c: { catId: CategoryId; query: string; googleSearchUrl: string },
+    isNotable: boolean, headline: string, summary: string, wordCount: number,
+    sources: Array<{ title: string; uri: string }>
+  ) => ({
+    categoryId: c.catId, queryUsed: c.query, isNotable, headline, summary, wordCount,
+    sources: isNotable ? sources : [], googleSearchUrl: c.googleSearchUrl,
+    searchProvider: 'Wikipedia + OSM sources, written by Gemini',
+  });
+
+  const [en, uk] = await Promise.all([wikiNearby('en', building.location), wikiNearby('uk', building.location)]);
+  const articles = [...en, ...uk].slice(0, 4);
+  const hasFacts = Boolean(building.osmFacts && /architect|start_date|heritage|wikipedia|wikidata|description/.test(building.osmFacts));
+
+  if (articles.length === 0 && !hasFacts) {
+    return cats.map((c) => mkFinding(c, false, 'No notable match found',
+      'No Wikipedia, Wikidata or OSM heritage data was found for this address.', 0, []));
+  }
+
+  const sourceText = [
+    building.osmFacts ? `OSM TAGS:\n${building.osmFacts}` : '',
+    ...articles.map((a, i) => `SOURCE ${i + 1} (${a.title}, ${a.url}):\n${a.extract}`),
+  ].filter(Boolean).join('\n\n');
+
+  const sections = cats
+    .map((c) => `=== CATEGORY: ${c.catId} ===\nQuestion: "${c.query}"\nGuidance: ${buildCategoryPrompt(c.catId, buildingLabel).guidance}`)
+    .join('\n\n');
+
+  const prompt = `You are the writer for a walking-tour audio guide.
+Building: ${buildingLabel}${building.neighborhood ? `, ${building.neighborhood}` : ''} (lat ${building.location.lat.toFixed(5)}, lng ${building.location.lng.toFixed(5)}).
+
+SOURCES (the only facts you may use):
+${sourceText}
+
+Rules:
+- Sources may describe neighboring places. Use a source only if it is clearly about this exact building (matching address or name). Otherwise answer NOTABLE: NO for that category.
+- Never add names, dates or events that are not in the sources. If the sources do not support a category, answer NOTABLE: NO.
+- Write flowing narrative prose for text-to-speech: no markdown, bullets, headings, citations or URLs. Sources may be in Ukrainian; write the narrative in English.
+
+${sections}
+
+Respond for EVERY category in exactly this format:
+=== CATEGORY: <id> ===
+NOTABLE: YES or NO
+HEADLINE: <one line, max 12 words>
+NARRATIVE:
+<narrative, or one sentence explaining why not notable>`;
+
+  const response = await withRetry(() =>
+    researchLimiter(() =>
+      aiGenerate({
+        model: RESEARCH_MODEL,
+        contents: prompt,
+        config: { temperature: 0.3, maxOutputTokens: 8192 },
+      })
+    )
+  );
+
+  const raw = (response.text || '').replace(/\r/g, '');
+  const sources = articles.map((a) => ({ title: `${a.title} — Wikipedia`, uri: a.url }));
+  return cats.map((c) => {
+    const m = raw.match(new RegExp(`=== CATEGORY:\\s*${c.catId}\\s*===([\\s\\S]*?)(?==== CATEGORY:|$)`, 'i'));
+    const block = m?.[1] || '';
+    const yes = /NOTABLE:\s*YES/i.test(block);
+    const headline = (block.match(/HEADLINE:\s*(.+)/i)?.[1] || '').trim();
+    const narrative = cleanForSpeech(block.split(/NARRATIVE:\s*/i)[1] || '');
+    const wordCount = narrative.split(/\s+/).filter(Boolean).length;
+    const isNotable = yes && wordCount >= 80;
+    return mkFinding(c, isNotable,
+      isNotable ? headline || building.displayName || building.streetAddress : 'No notable match found',
+      narrative || 'The available sources do not support this category.',
+      isNotable ? wordCount : 0, sources);
+  });
 }
 
 async function researchGrounded(
@@ -271,10 +431,10 @@ HEADLINE: <one line, max 12 words>
 NARRATIVE:
 <the narrative, or one sentence explaining why it is not notable>`;
 
-  const ai = getGenAIClient();
+  //const ai = getGenAIClient(); // not used after switching to aiGenerate()
   const response = await withRetry(() =>
     researchLimiter(() =>
-      ai.models.generateContent({
+      aiGenerate({
         model: RESEARCH_MODEL,
         contents: prompt,
         config: { tools: [{ googleSearch: {} }], temperature: 0.3 },
@@ -311,6 +471,141 @@ NARRATIVE:
   return finding;
 }
 /* Claude fragment2 end */
+
+/* Groq fragment */
+const GROQ_RESEARCH_MODEL = process.env.GROQ_RESEARCH_MODEL || 'groq/compound-mini';
+const MAX_GROQ_RPM = Math.max(1, Number(process.env.MAX_GROQ_RPM) || 20);
+
+/** Sliding-window requests-per-minute gate, FIFO. */
+function createRpmGate(max: number) {
+  const stamps: number[] = [];
+  let gate: Promise<void> = Promise.resolve();
+  return function acquire(): Promise<void> {
+    const ticket = gate.then(async () => {
+      for (;;) {
+        const now = Date.now();
+        while (stamps.length && now - stamps[0] >= 60_000) stamps.shift();
+        if (stamps.length < max) {
+          stamps.push(now);
+          return;
+        }
+        await sleepMs(stamps[0] + 60_000 - now + 25);
+      }
+    });
+    gate = ticket;
+    return ticket;
+  };
+}
+const acquireGroqSlot = createRpmGate(MAX_GROQ_RPM);
+
+async function groqResearch(
+  prompt: string
+): Promise<{ text: string; sources: Array<{ title: string; uri: string }> }> {
+  for (let attempt = 0; ; attempt++) {
+    await acquireGroqSlot();
+    console.log('[debug] groqResearch():', GROQ_RESEARCH_MODEL, new Date().toISOString());
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: GROQ_RESEARCH_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+      }),
+      signal: AbortSignal.timeout(120_000),
+    });
+
+    if (r.status === 429) {
+      const body = await r.text().catch(() => '');
+      // Daily quota: retrying is pointless
+      if (attempt >= 3 || /per day|\bTPD\b|\bRPD\b/i.test(body)) {
+        throw new Error(`Groq 429: ${body.slice(0, 300)}`);
+      }
+      const wait = Math.min(60, Number(r.headers.get('retry-after')) || 20);
+      console.warn(`[groq] 429, retrying in ${wait}s`);
+      await sleepMs(wait * 1000 + 500);
+      continue;
+    }
+    if (!r.ok) {
+      throw new Error(`Groq HTTP ${r.status}: ${(await r.text().catch(() => '')).slice(0, 300)}`);
+    }
+
+    const data = (await r.json()) as {
+      choices?: Array<{
+        message?: {
+          content?: string;
+          executed_tools?: Array<{
+            search_results?: { results?: Array<{ title?: string; url?: string }> };
+          }>;
+        };
+      }>;
+    };
+    const msg = data.choices?.[0]?.message;
+    const seen = new Set<string>();
+    const sources = (msg?.executed_tools || [])
+      .flatMap((t) => t.search_results?.results || [])
+      .map((s) => ({ title: s.title || s.url || '', uri: s.url || '' }))
+      .filter((s) => s.uri && !seen.has(s.uri) && seen.add(s.uri))
+      .slice(0, 6);
+    return { text: msg?.content || '', sources };
+  }
+}
+
+async function researchGroundedGroq(
+  catId: CategoryId,
+  building: BuildingCandidate,
+  buildingLabel: string,
+  googleSearchUrl: string
+): Promise<Record<string, unknown>> {
+  const cacheKey = `${building.normalizedAddress}|${catId}`;
+  const hit = researchCache.get(cacheKey);
+  if (hit && hit.expiresAt > Date.now()) return hit.finding;
+
+  const { query, guidance } = buildCategoryPrompt(catId, buildingLabel);
+  const prompt = `You are the researcher for a walking-tour audio guide.
+Location: ${buildingLabel}${building.neighborhood ? `, ${building.neighborhood}` : ''} (lat ${building.location.lat.toFixed(5)}, lng ${building.location.lng.toFixed(5)}).
+
+Use web search to answer this question:
+"${query}"
+
+Rules:
+- ${guidance}
+- Use only facts found in search results about this exact address or building. Never invent names, dates or events. If the building is ordinary or you cannot verify the connection, answer NOTABLE: NO.
+- Write flowing narrative prose for text-to-speech: no markdown, bullets, headings, citations or URLs.
+
+Respond in exactly this format:
+NOTABLE: YES or NO
+HEADLINE: <one line, max 12 words>
+NARRATIVE:
+<the narrative, or one sentence explaining why it is not notable>`;
+
+  const { text, sources } = await researchLimiter(() => groqResearch(prompt));
+
+  const raw = text.replace(/\r/g, '').trim();
+  const yes = /NOTABLE:\s*YES/i.test(raw);
+  const headline = (raw.match(/HEADLINE:\s*(.+)/i)?.[1] || '').trim();
+  const narrative = cleanForSpeech(raw.split(/NARRATIVE:\s*/i)[1] || '');
+  const wordCount = narrative.split(/\s+/).filter(Boolean).length;
+  const isNotable = yes && wordCount >= 80;
+
+  const finding = {
+    categoryId: catId,
+    queryUsed: query,
+    isNotable,
+    headline: isNotable ? headline || building.displayName || building.streetAddress : 'No notable match found',
+    summary: narrative || 'No verifiable information was found for this building.',
+    wordCount: isNotable ? wordCount : 0,
+    sources: isNotable ? sources : [],
+    googleSearchUrl,
+    searchProvider: `Groq ${GROQ_RESEARCH_MODEL} + web search`,
+  };
+  researchCache.set(cacheKey, { expiresAt: Date.now() + 24 * 3600 * 1000, finding });
+  return finding;
+}
+/* Groq fragment end */
 
 function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
@@ -1188,7 +1483,7 @@ async function startServer() {
       const firstPt = routePath[0];
       const lastPt = routePath[routePath.length - 1];
       const midPt = routePath[Math.floor(routePath.length / 2)];
-      const cacheKey = `v2|${provider}|${firstPt.lat.toFixed(4)},${firstPt.lng.toFixed(4)}|${midPt.lat.toFixed(4)},${midPt.lng.toFixed(4)}|${lastPt.lat.toFixed(4)},${lastPt.lng.toFixed(4)}|${routePath.length}|${deviationMeters}`;
+      const cacheKey = `v3|${provider}|${firstPt.lat.toFixed(4)},${firstPt.lng.toFixed(4)}|${midPt.lat.toFixed(4)},${midPt.lng.toFixed(4)}|${lastPt.lat.toFixed(4)},${lastPt.lng.toFixed(4)}|${routePath.length}|${deviationMeters}`;
       const cachedEntry = discoveryResultCache.get(cacheKey);
       if (cachedEntry && cachedEntry.expiresAt > Date.now()) {
         res.json(cachedEntry.payload);
@@ -1928,8 +2223,28 @@ async function startServer() {
 
     /* Claude addition */
     if (process.env.GEMINI_API_KEY) {
+      try {
+        const findings = await researchFromSources(
+          categoryQueries.map((q) => ({ catId: q.catId, query: q.query, googleSearchUrl: q.googleSearchUrl })),
+          building,
+          buildingLabel
+        );
+        res.json({
+          findings,
+          positiveCount: findings.filter((f) => (f as { isNotable: boolean }).isNotable).length,
+          rawAiResponse: JSON.stringify(findings, null, 2),
+        });
+        return;
+      } catch (e) {
+        console.warn('Source-based research failed:', e instanceof Error ? e.message : e);
+        // falls through to the existing Wikipedia/Places code
+      }
+    }
+    else if (process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY) {
       const settled = await Promise.allSettled(
-        categoryQueries.map((q) => researchGrounded(q.catId, building, buildingLabel, q.googleSearchUrl))
+        categoryQueries.map((q) => process.env.GROQ_API_KEY ? 
+                                   researchGroundedGroq(q.catId, building, buildingLabel, q.googleSearchUrl) :
+                                   researchGrounded(q.catId, building, buildingLabel, q.googleSearchUrl))
       );
       if (settled.some((s) => s.status === 'fulfilled')) {
         const findings = settled.map((s, i) =>
@@ -2244,7 +2559,7 @@ async function startServer() {
         .map((f) => `${f.categoryId} (${f.headline}): ${f.summary.slice(0, 260)}`)
         .join('\n');
 
-      const response = await ai.models.generateContent({
+      const response = await aiGenerate({
         model: 'gemini-4-hydrogen',
         contents: `Create a warm, natural 2-sentence audio recap for a walker passing ${
           displayName ? `${displayName} at ` : ''
@@ -2281,7 +2596,7 @@ async function startServer() {
       }
 
       const ai = getGenAIClient();
-      const response = await ai.models.generateContent({
+      const response = await aiGenerate({
         model: 'gemini-3.8-flash-lite-tts',
         contents: [
           {
