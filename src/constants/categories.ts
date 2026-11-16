@@ -151,13 +151,6 @@ export interface MapProviderOption {
 
 export const MAP_PROVIDER_OPTIONS: MapProviderOption[] = [
   {
-    id: 'google',
-    name: 'Google Maps',
-    badge: 'API Key / Demo Tier',
-    description:
-      'Google Maps JS canvas, Routes API, Places (New), and Geocoding v4.',
-  },
-  {
     id: 'osm',
     name: 'OpenStreetMap',
     badge: 'Free · No Key',
@@ -170,14 +163,6 @@ export const MAP_PROVIDER_OPTIONS: MapProviderOption[] = [
     badge: 'Free · No Key',
     description:
       'Minimalist Carto Voyager map tiles over OpenStreetMap data with free OSRM walking routes & Overpass address discovery.',
-  },
-  {
-    id: 'apple',
-    name: 'Apple Maps (MapKit JS)',
-    badge: 'Free 250k/day Tier',
-    description:
-      'Apple MapKit JS when APPLE_MAPS_TOKEN is set; otherwise uses clean Light Carto + free OSM routing with zero setup.',
-    requiresToken: true,
   },
 ];
 
