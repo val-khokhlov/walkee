@@ -22,6 +22,7 @@ import type {
   RevisitedBehavior,
   VoiceName,
 } from '../types/tour';
+import { AiSettingsSection } from './AiSettingsSection';
 
 interface SettingsViewProps {
   settings: GuideSettings;
@@ -73,6 +74,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </p>
           </div>
 
+          <AiSettingsSection />
+          
           {/* 1. Discovery Categories (First Section) */}
           <section className="bg-white rounded-2xl border border-[#ddc0ba]/50 p-5 space-y-4 shadow-xs">
             <div className="flex items-center justify-between gap-2">
