@@ -35,6 +35,7 @@ import {
   getAudioClipFromCache,
   saveAudioClipToCache,
 } from '../utils/offlineCache';
+import { generateRecap } from '../services/research';
 
 interface AudioSegment {
   id: string;
@@ -269,37 +270,9 @@ export const ActiveGuideView: React.FC<ActiveGuideViewProps> = ({
       }
 
       // 2. Request Gemini TTS from server
-      try {
-        const res = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            text: segment.text,
-            voiceName: settings.voiceName,
-            guideLanguage: settings.guideLanguage,
-          }),
-        });
-        if (!res.ok) return null;
-        const data = (await res.json()) as {
-          audioBase64?: string;
-          mimeType?: string;
-        };
-        if (!data.audioBase64) return null;
-
-        if (settings.cacheForOffline) {
-          void saveAudioClipToCache(
-            cacheKey,
-            data.audioBase64,
-            data.mimeType || 'audio/wav'
-          );
-        }
-
-        const url = `data:${data.mimeType || 'audio/wav'};base64,${data.audioBase64}`;
-        audioUrlCacheRef.current[cacheKey] = url;
-        return { url, source: 'Gemini TTS' };
-      } catch {
-        return null;
-      }
+      // Narration now uses the device voice (the speechSynthesis fallback below).
+      // Step 2 replaces this with the native text-to-speech plugin.
+      return null;
     },
     [settings.voiceName, settings.cacheForOffline, isOffline]
   );
@@ -464,22 +437,15 @@ export const ActiveGuideView: React.FC<ActiveGuideViewProps> = ({
 
       if (!isOffline) {
         try {
-          const res = await fetch('/api/buildings/recap', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              streetAddress: building.streetAddress,
-              displayName: building.displayName,
-              findings: positive,
-              guideLanguage: settings.guideLanguage,
-            }),
+          const text = await generateRecap({
+            streetAddress: building.streetAddress,
+            displayName: building.displayName,
+            findings: positive,
+            guideLanguage: settings.guideLanguage,
           });
-          if (res.ok) {
-            const data = (await res.json()) as { recapText?: string };
-            if (data.recapText) recapText = data.recapText;
-          }
+          if (text) recapText = text;
         } catch {
-          // Keep deterministic fallback recap
+          // Keep the deterministic recap above
         }
       }
 
