@@ -27,13 +27,17 @@ import {
   savePositiveBuildingToCache,
   saveRouteBundleToCache,
 } from './utils/offlineCache';
+import { computeFootRoute } from './services/routing';
+import { discoverBuildings } from './services/discovery';
+import { researchBuilding } from './services/research';
+import { hasAiKey, loadAiConfig } from './services/aiConfig';
 
 const SETTINGS_STORAGE_KEY = 'wanderaudio_settings_v1';
 const ALLOWED_DEVIATIONS = [50, 250, 500, 1000];
-const ALLOWED_PROVIDERS = ['google', 'osm', 'carto', 'apple'] as const;
+const ALLOWED_PROVIDERS = ['osm', 'carto'] as const;
 
 const DEFAULT_SETTINGS: GuideSettings = {
-  mapProvider: 'google',
+  mapProvider: 'osm',
   deviationMeters: 250,
   selectedCategories: ['historical', 'famous_people', 'architecture'],
   cacheForOffline: true,
@@ -122,21 +126,11 @@ export default function App() {
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
-        const routeRes = await fetch('/api/maps/compute-route', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            provider: settings.mapProvider,
-            waypoints: filledWaypoints.map((w) => ({
-              label: w.label.trim(),
-              coords: w.coords,
-            })),
-          }),
-        });
-        if (!routeRes.ok) return;
-        const routeData = (await routeRes.json()) as ComputedRoute;
-        if (routeData && routeData.path && routeData.path.length >= 2) {
+        const routeData = await computeFootRoute(
+          filledWaypoints.map((w) => ({ label: w.label.trim(), coords: w.coords })),
+          controller.signal
+        );
+        if (routeData.path.length >= 2) {
           const originLabel = filledWaypoints[0].label.trim();
           const destinationLabel = filledWaypoints[filledWaypoints.length - 1].label.trim();
           setActiveRoute({
@@ -176,29 +170,6 @@ export default function App() {
   });
 
   const discoveryAbortRef = useRef<AbortController | null>(null);
-
-  // Fetch Maps config (Google & Apple tokens) from server config
-  useEffect(() => {
-    fetch('/api/maps/client-config')
-      .then((r) => r.json())
-      .then(
-        (data: {
-          mapsApiKey?: string;
-          appleMapsToken?: string;
-          providers?: { google?: boolean; apple?: boolean };
-        }) => {
-          if (data.mapsApiKey && !mapsApiKey) setMapsApiKey(data.mapsApiKey);
-          if (data.appleMapsToken) setAppleMapsToken(data.appleMapsToken);
-          setProviderAvailability({
-            google: Boolean(data.mapsApiKey || mapsApiKey),
-            apple: Boolean(data.appleMapsToken),
-          });
-        }
-      )
-      .catch(() => {
-        // Ignore when offline
-      });
-  }, [mapsApiKey]);
 
   // Listen to GMP quota exceeded event (Tier 1 & Tier 2)
   useEffect(() => {
@@ -343,6 +314,12 @@ export default function App() {
       return;
     }
 
+    if (!hasAiKey()) {
+      setErrorBanner('Add your free Gemini or Groq API key in Settings before starting a route.');
+      setScreen('settings');
+      return;
+    }
+
     try {
       // Phase 1: Trace walking route across all waypoints
       setProgress({
@@ -353,36 +330,10 @@ export default function App() {
         positiveBuildings: 0,
       });
 
-      const routeRes = await fetch('/api/maps/compute-route', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          provider: settings.mapProvider,
-          waypoints: filledWaypoints.map((w) => ({
-            label: w.label.trim(),
-            coords: w.coords,
-          })),
-        }),
-      });
-
-      const routeData = (await routeRes.json()) as ComputedRoute & {
-        error?: string;
-        quotaExceeded?: boolean;
-      };
-
-      if (
-        settings.mapProvider === 'google' &&
-        (routeRes.status === 429 || routeData.quotaExceeded)
-      ) {
-        window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
-      }
-      if (!routeRes.ok || !routeData.path || routeData.path.length < 2) {
-        throw new Error(
-          routeData.error ||
-            'Could not compute a walking route between those waypoints.'
-        );
-      }
+      const routeData = await computeFootRoute(
+        filledWaypoints.map((w) => ({ label: w.label.trim(), coords: w.coords })),
+        controller.signal
+      );
 
       const computedRoute: ComputedRoute = {
         ...routeData,
@@ -405,39 +356,12 @@ export default function App() {
         positiveBuildings: 0,
       });
 
-      const scanRes = await fetch('/api/maps/discover-buildings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const scanData = await discoverBuildings(computedRoute.path, settings.deviationMeters, {
+        maxBuildings: loadAiConfig().maxBuildings,
         signal: controller.signal,
-        body: JSON.stringify({
-          provider: settings.mapProvider,
-          path: computedRoute.path,
-          deviationMeters: settings.deviationMeters,
-        }),
       });
+      const candidates = scanData.buildings;
 
-      const scanData = (await scanRes.json()) as {
-        buildings?: DiscoveredBuilding[];
-        error?: string;
-        quotaExceeded?: boolean;
-        quotaTriggered?: boolean;
-      };
-
-      if (
-        settings.mapProvider === 'google' &&
-        (scanRes.status === 429 ||
-          scanData.quotaExceeded ||
-          scanData.quotaTriggered)
-      ) {
-        window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
-      }
-      if (!scanRes.ok) {
-        throw new Error(
-          scanData.error || 'Failed to discover buildings along the route.'
-        );
-      }
-
-      const candidates = scanData.buildings || [];
       if (candidates.length === 0) {
         setProgress(null);
         setErrorBanner(
@@ -484,69 +408,25 @@ export default function App() {
             : candidate.streetAddress;
 
           try {
-            const res = await fetch('/api/buildings/research', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+            const result = await researchBuilding(candidate, missingCategories, {
+              guideLanguage: settings.guideLanguage,
               signal: controller.signal,
-              body: JSON.stringify({
-                building: candidate,
-                categories: missingCategories,
-                guideLanguage: settings.guideLanguage,
-              }),
             });
-
-            const data = (await res.json().catch(() => ({}))) as {
-              findings?: CategoryFinding[];
-              rawAiResponse?: string;
-              error?: string;
-            };
-
-            if (!res.ok && data.error && !firstResearchError) {
-              firstResearchError = data.error;
-            }
-
-            if (Array.isArray(data.findings) && data.findings.length > 0) {
-              allFindings = [...allFindings, ...data.findings];
-            } else {
-              const fallbackMsg =
-                data.error || `Gemini API request failed (HTTP ${res.status}).`;
-              if (!firstResearchError) firstResearchError = fallbackMsg;
-              allFindings = [
-                ...allFindings,
-                ...missingCategories.map((catId) => ({
-                  categoryId: catId,
-                  queryUsed:
-                    CATEGORY_MAP[catId]?.queryTemplate.replace(
-                      '{ADDRESS}',
-                      buildingLabel
-                    ) || `${catId}: ${buildingLabel}`,
-                  isNotable: false,
-                  headline: `AI Error (${res.status})`,
-                  summary: fallbackMsg,
-                  wordCount: 0,
-                  sources: [],
-                })),
-              ];
-            }
-            rawAiResponse = data.rawAiResponse || data.error;
-          } catch (fetchErr: unknown) {
-            if ((fetchErr as Error)?.name === 'AbortError') throw fetchErr;
-            const errMsg =
-              fetchErr instanceof Error
-                ? fetchErr.message
-                : 'Network error contacting research endpoint.';
+            allFindings = [...allFindings, ...result.findings];
+            rawAiResponse = result.rawAiResponse;
+          } catch (err: unknown) {
+            if ((err as Error)?.name === 'AbortError') throw err;
+            const errMsg = err instanceof Error ? err.message : 'Research failed.';
             if (!firstResearchError) firstResearchError = errMsg;
             allFindings = [
               ...allFindings,
               ...missingCategories.map((catId) => ({
                 categoryId: catId,
                 queryUsed:
-                  CATEGORY_MAP[catId]?.queryTemplate.replace(
-                    '{ADDRESS}',
-                    buildingLabel
-                  ) || `${catId}: ${buildingLabel}`,
+                  CATEGORY_MAP[catId]?.queryTemplate.replace('{ADDRESS}', buildingLabel) ||
+                  `${catId}: ${buildingLabel}`,
                 isNotable: false,
-                headline: 'Request Error',
+                headline: 'Research error',
                 summary: errMsg,
                 wordCount: 0,
                 sources: [],
