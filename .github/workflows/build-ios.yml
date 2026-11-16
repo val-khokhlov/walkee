@@ -1,0 +1,55 @@
+name: Build Capacitor iOS
+
+on:
+  push:
+    branches: [ native ]
+  pull_request:
+    branches: [ native ]
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Install dependencies & build web app
+        run: |
+          npm install --legacy-peer-deps
+          npm install @capacitor/core @capacitor/cli @capacitor/ios --legacy-peer-deps
+          npm run build
+          npx cap add ios
+          npx cap sync ios
+          
+      - name: Install CocoaPods
+        run: |
+          cd ios/App
+          pod install
+          
+      - name: Build iOS App (Unsigned)
+        run: |
+          xcodebuild -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/ios \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+            
+      - name: Package Unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/ios/Build/Products/Release-iphoneos/App.app Payload/
+          zip -r App-unsigned.ipa Payload
+          
+      - name: Upload iOS Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-app-build
+          path: |
+            build/ios/Build/Products/Release-iphoneos/App.app
+            App-unsigned.ipa
