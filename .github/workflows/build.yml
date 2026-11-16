@@ -1,4 +1,4 @@
-name: Build Capacitor iOS and Android
+name: Build Capacitor Android
 
 on:
   push:
@@ -21,7 +21,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
           
       - name: Install dependencies & build web app
         run: |
@@ -43,41 +43,3 @@ jobs:
           name: android-release-apk
           path: android/app/build/outputs/apk/release/*.apk
 
-  build-ios:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          
-      - name: Install dependencies & build web app
-        run: |
-          npm install --legacy-peer-deps
-          npm install @capacitor/core @capacitor/cli @capacitor/ios --legacy-peer-deps
-          npm run build
-          npx cap add ios
-          npx cap sync ios
-          
-      - name: Install CocoaPods
-        run: |
-          cd ios/App
-          pod install
-          
-      - name: Build iOS App (Unsigned)
-        run: |
-          xcodebuild -workspace ios/App/App.xcworkspace \
-            -scheme App \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build/ios \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-            
-      - name: Upload iOS Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-app-build
-          path: build/ios/Build/Products/Release-iphoneos/App.app
