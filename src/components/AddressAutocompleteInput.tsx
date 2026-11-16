@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useMapsLibrary } from '@vis.gl/react-google-maps';
 import { LocateFixed, MapPin, X } from 'lucide-react';
 import type { LatLngLiteral, MapProviderId } from '../types/tour';
+import { autocompletePlaces } from '../services/routing';
 
 interface AddressAutocompleteInputProps {
   id: string;
@@ -166,18 +167,7 @@ export const AddressAutocompleteInput: React.FC<AddressAutocompleteInputProps> =
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
-        const res = await fetch(
-          `/api/maps/autocomplete?q=${encodeURIComponent(trimmed)}&provider=${encodeURIComponent(mapProvider)}`,
-          { signal: controller.signal }
-        );
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          suggestions?: Array<{ label: string; coords?: LatLngLiteral }>;
-        };
-        const list = (data.suggestions || []).map((s) => ({
-          label: s.label,
-          coords: s.coords,
-        }));
+        const list = await autocompletePlaces(trimmed, controller.signal);
         setSuggestions(list);
         setIsOpen(list.length > 0);
       } catch {
