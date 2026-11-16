@@ -26,6 +26,7 @@ jobs:
       - name: Install dependencies & build web app
         run: |
           npm install --legacy-peer-deps
+          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
           npm run build
           npx cap sync android
           
@@ -54,6 +55,7 @@ jobs:
       - name: Install dependencies & build web app
         run: |
           npm install --legacy-peer-deps
+          npm install @capacitor/core @capacitor/cli @capacitor/ios --legacy-peer-deps
           npm run build
           npx cap sync ios
           
