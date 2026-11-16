@@ -4,13 +4,12 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
-    "start": "node server.ts",
+    "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
-  },
+    "lint": "tsc --noEmit",
+    "cap:sync": "vite build && cap sync"
+  }
   "dependencies": {
     "@google/genai": "^3.3.0",
     "@tailwindcss/vite": "^4.3.3",
