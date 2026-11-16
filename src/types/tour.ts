@@ -69,6 +69,7 @@ export interface DiscoveredBuilding {
   placeId?: string;
   googleMapsUri?: string;
   primaryType?: string;
+  osmFacts?: string;
 }
 
 export interface GroundingSource {
